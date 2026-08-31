@@ -58,6 +58,24 @@ def nlpause(base: float = 0.05) -> None:
         time.sleep(base * random.uniform(0.95, 1.5))
 
 
+def clamp_wait(raw) -> float:
+    try:
+        sec = float(raw)
+    except (TypeError, ValueError):
+        sec = 0.0
+    if sec < 0:
+        return 0.0
+    if sec > 3.0:
+        return 3.0
+    return sec
+
+
+def wait_before_start(raw) -> None:
+    sec = clamp_wait(raw)
+    if sec > 0:
+        time.sleep(sec)
+
+
 def ease_move(x: int, y: int) -> None:
     """先快后慢移到目标, 路径上加小扰动, 终点不乱飘。"""
     try:
@@ -371,6 +389,7 @@ def parse_after(raw) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
+    wait_before_start(getattr(args, "wait", 0))
     after = parse_after(getattr(args, "after", -1))
     win = find_boss_window()
     if not win:
@@ -495,11 +514,12 @@ def _wheel_burst(down: bool, ticks: int) -> None:
     fn(max(1, ticks), interval=interval, waitTime=0.0)
 
 
-def jitter_scroll_to(ctrl, doc) -> None:
-    """先快后慢滚到目标, 只沿需要的方向, 扰动只改格数。"""
+def jitter_scroll_to(ctrl, doc) -> bool:
+    """先快后慢滚到目标。有实际滚轮则返回 True, 调用方须等 0.1s 再点。"""
     _park_on_list(doc, ctrl)
     if _in_view(ctrl, doc):
-        return
+        return False
+    scrolled = False
     for _ in range(22):
         try:
             r = ctrl.BoundingRectangle
@@ -520,10 +540,12 @@ def jitter_scroll_to(ctrl, doc) -> None:
             ticks = 1
         ticks = max(1, ticks + random.choice((-1, 0, 0, 1)))
         _wheel_burst(down, ticks)
+        scrolled = True
         if remain > 220:
             time.sleep(random.uniform(0.008, 0.02))
         else:
             time.sleep(random.uniform(0.02, 0.045))
+    return scrolled
 
 
 def jitter_scroll_list_down(doc, ctrls: list) -> None:
@@ -642,8 +664,8 @@ def run_chat(picks: List[int]) -> Dict[str, Any]:
         if ctrl is None:
             results.append({"i": idx, "ok": False, "note": "找不到对应卡片"})
             continue
-        jitter_scroll_to(ctrl, doc)
-        nlpause(0.04)
+        if jitter_scroll_to(ctrl, doc):
+            time.sleep(0.1)
         if not human_invoke(ctrl):
             results.append({"i": idx, "ok": False, "title": job.get("title"), "note": "选中卡片失败"})
             continue
@@ -670,6 +692,7 @@ def run_chat(picks: List[int]) -> Dict[str, Any]:
 
 
 def cmd_chat(args: argparse.Namespace) -> None:
+    wait_before_start(getattr(args, "wait", 0))
     raw = (args.pick or "").strip()
     if not raw:
         emit({"error": "用法: zhipin_win.py chat --pick 0,2,5"}, 2)
@@ -683,6 +706,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
 
 def cmd_apply(args: argparse.Namespace) -> None:
+    wait_before_start(getattr(args, "wait", 0))
     try:
         count = int(args.count)
     except (TypeError, ValueError):
@@ -713,6 +737,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         if not jobs:
             stale += 1
             jitter_scroll_list_down(doc, ctrls)
+            time.sleep(0.1)
             continue
         scanned_max = max(scanned_max, len(jobs))
         enrich_commute(jobs)
@@ -745,7 +770,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         if ok_n >= count:
             break
         jitter_scroll_list_down(doc, ctrls)
-        pause(0.08, 0.12)
+        time.sleep(0.1)
     emit(
         {
             "min_daily": min_daily,
@@ -774,12 +799,15 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd")
     p_list = sub.add_parser("list")
     p_list.add_argument("--after", default="-1", help="只显示 i 大于该值的卡, 上面的视为已看过")
+    p_list.add_argument("--wait", default="0", help="开始前等待秒数, 最大 3")
     p_chat = sub.add_parser("chat")
     p_chat.add_argument("--pick", default="", help="逗号分隔的 i, 对应 list 的序号")
+    p_chat.add_argument("--wait", default="0", help="开始前等待秒数, 最大 3")
     p_apply = sub.add_parser("apply")
     p_apply.add_argument("--count", default="20")
     p_apply.add_argument("--min-daily", default=None)
     p_apply.add_argument("--after", default="-1", help="只处理 i 大于该值的卡")
+    p_apply.add_argument("--wait", default="0", help="开始前等待秒数, 最大 3")
     args = p.parse_args()
     if args.cmd == "list":
         cmd_list(args)
@@ -790,7 +818,7 @@ def main() -> None:
     else:
         emit(
             {
-                "error": "用法: zhipin_win.py list [--after 10] | chat --pick 0,2,5 | apply --count 20 --min-daily 90 --after 10",
+                "error": "用法: zhipin_win.py list [--after 10] [--wait 1.2] | chat --pick 0,2,5 [--wait 0.8] | apply --count 20 --min-daily 90 --after 10 --wait 1.7",
             },
             2,
         )
