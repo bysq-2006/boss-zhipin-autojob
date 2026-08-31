@@ -1,0 +1,14 @@
+# 个人隐私 / 密钥
+memory.config.env
+helper.cache.json
+last_list.json
+投递记录.txt
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
