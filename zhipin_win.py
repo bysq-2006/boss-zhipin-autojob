@@ -51,11 +51,36 @@ def nlpause(base: float = 0.05) -> None:
     """多数很快, 偶尔顿一下, 避免每次一样长。"""
     u = random.random()
     if u < 0.65:
-        time.sleep(base * random.uniform(0.35, 0.85))
+        time.sleep(base * random.uniform(0.2, 0.55))
     elif u < 0.9:
-        time.sleep(base * random.uniform(0.85, 1.4))
+        time.sleep(base * random.uniform(0.55, 0.95))
     else:
-        time.sleep(base * random.uniform(1.4, 2.2))
+        time.sleep(base * random.uniform(0.95, 1.5))
+
+
+def ease_move(x: int, y: int) -> None:
+    """先快后慢移到目标, 路径上加小扰动, 终点不乱飘。"""
+    try:
+        cx, cy = auto.GetCursorPos()
+    except Exception:
+        auto.SetCursorPos(int(x), int(y))
+        return
+    dx, dy = x - cx, y - cy
+    dist = (dx * dx + dy * dy) ** 0.5
+    if dist < 4:
+        auto.SetCursorPos(int(x), int(y))
+        return
+    steps = max(5, min(14, int(dist / 110)))
+    for i in range(1, steps + 1):
+        t = i / float(steps)
+        e = 1.0 - (1.0 - t) ** 3
+        fade = 1.0 - t
+        wig = fade * fade * random.uniform(-10.0, 10.0)
+        nx = cx + dx * e + wig
+        ny = cy + dy * e + wig * random.uniform(-0.35, 0.35)
+        auto.SetCursorPos(int(nx), int(ny))
+        time.sleep(0.002 + t * t * 0.01)
+    auto.SetCursorPos(int(x), int(y))
 
 
 def clean_text(s: str) -> str:
@@ -414,12 +439,7 @@ def human_invoke(ctrl, lo: float = 0.03, hi: float = 0.08) -> bool:
         pass
     if x is not None and r is not None and r.width() > 0:
         try:
-            auto.MoveTo(
-                x,
-                y,
-                moveSpeed=random.choice((2.6, 3.2, 3.8, 4.5, 2.4)),
-                waitTime=random.choice((0.0, 0.01, 0.02, 0.04)),
-            )
+            ease_move(x, y)
         except Exception:
             pass
     nlpause((lo + hi) / 2)
@@ -464,17 +484,23 @@ def _park_on_list(doc, ctrl=None) -> None:
         else:
             mx = v.left + 280
         my = v.top + int(v.height() * 0.52)
-        auto.MoveTo(int(mx), int(my), moveSpeed=random.uniform(2.2, 3.6), waitTime=0.02)
+        ease_move(int(mx), int(my))
     except Exception:
         pass
 
 
+def _wheel_burst(down: bool, ticks: int) -> None:
+    fn = auto.WheelDown if down else auto.WheelUp
+    interval = 0.008 + random.uniform(0.0, 0.006)
+    fn(max(1, ticks), interval=interval, waitTime=0.0)
+
+
 def jitter_scroll_to(ctrl, doc) -> None:
-    """单向滚到目标, 格数/间隔非线性, 不回滚、不乱抖。"""
+    """先快后慢滚到目标, 只沿需要的方向, 扰动只改格数。"""
     _park_on_list(doc, ctrl)
     if _in_view(ctrl, doc):
         return
-    for _ in range(28):
+    for _ in range(22):
         try:
             r = ctrl.BoundingRectangle
             v = doc.BoundingRectangle
@@ -482,19 +508,33 @@ def jitter_scroll_to(ctrl, doc) -> None:
             break
         if _in_view(ctrl, doc):
             break
-        ticks = random.choice((1, 1, 2, 2, 3))
+        remain = abs(r.top - (v.top + v.height() * 0.42))
         down = r.top > (v.top + v.height() * 0.55)
-        fn = auto.WheelDown if down else auto.WheelUp
-        fn(ticks, interval=random.uniform(0.03, 0.07), waitTime=0.02)
-        pause(0.04, 0.1)
+        if remain > 500:
+            ticks = random.choice((5, 6, 7, 8))
+        elif remain > 220:
+            ticks = random.choice((3, 4, 5))
+        elif remain > 90:
+            ticks = random.choice((2, 2, 3))
+        else:
+            ticks = 1
+        ticks = max(1, ticks + random.choice((-1, 0, 0, 1)))
+        _wheel_burst(down, ticks)
+        if remain > 220:
+            time.sleep(random.uniform(0.008, 0.02))
+        else:
+            time.sleep(random.uniform(0.02, 0.045))
 
 
 def jitter_scroll_list_down(doc, ctrls: list) -> None:
     park = ctrls[-1] if ctrls else None
     _park_on_list(doc, park)
-    for _ in range(random.choice((3, 4, 5, 6))):
-        auto.WheelDown(random.choice((1, 1, 2, 3)), interval=random.uniform(0.03, 0.07), waitTime=0.02)
-        pause(0.04, 0.1)
+    bursts = random.choice((3, 4, 5))
+    for i in range(bursts):
+        t = i / float(max(1, bursts - 1))
+        ticks = int(6 - t * 4) + random.choice((-1, 0, 0, 1))
+        _wheel_burst(True, max(1, ticks))
+        time.sleep(0.008 + t * 0.03)
 
 
 def match_card(jobs_now: List[Dict[str, Any]], ctrls, pick_i: int, last: List[Dict[str, Any]]):
