@@ -9,6 +9,7 @@ import random
 import re
 import sys
 import time
+from _ctypes import COMError
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -342,6 +343,22 @@ def snapshot_jobs(doc) -> Tuple[list, List[Dict[str, Any]]]:
     return ctrls, jobs
 
 
+def stable_snapshot(win, attempts: int = 3) -> Tuple[Any, list, List[Dict[str, Any]]]:
+    """Reacquire the Edge accessibility tree when a UIA proxy goes stale."""
+    attempts = max(1, int(attempts))
+    for attempt in range(attempts):
+        try:
+            doc = find_document(win)
+            if not doc:
+                return None, [], []
+            ctrls, jobs = snapshot_jobs(doc)
+            return doc, ctrls, jobs
+        except COMError:
+            if attempt + 1 < attempts:
+                time.sleep(0.15 * (attempt + 1))
+    return None, [], []
+
+
 def job_key(j: Dict[str, Any]) -> str:
     return "%s\t%s" % ((j.get("company") or "").strip(), (j.get("title") or "").strip())
 
@@ -397,10 +414,9 @@ def cmd_list(args: argparse.Namespace) -> None:
     activate(win)
     if not ensure_boss_page(win):
         emit({"error": "Edge 里没有 BOSS直聘 标签"}, 2)
-    doc = find_document(win)
+    doc, _ctrls, jobs = stable_snapshot(win)
     if not doc:
-        emit({"error": "找不到页面 Document, 窗口可能最小化"}, 2)
-    _ctrls, jobs = snapshot_jobs(doc)
+        emit({"error": "页面 UI Automation 暂时不可用, 请保持 BOSS 标签页可见"}, 2)
     if not jobs:
         emit({"error": "未扫到 job-card-box", "window": win.Name}, 2)
     enrich_commute(jobs)
@@ -655,11 +671,10 @@ def run_chat(picks: List[int]) -> Dict[str, Any]:
     for n, idx in enumerate(picks):
         if n:
             nlpause(0.05)
-        doc = find_document(win)
+        doc, ctrls, jobs_now = stable_snapshot(win)
         if not doc:
-            results.append({"i": idx, "ok": False, "note": "丢失 Document"})
+            results.append({"i": idx, "ok": False, "note": "页面 UI Automation 暂时不可用"})
             continue
-        ctrls, jobs_now = snapshot_jobs(doc)
         ctrl, job = match_card(jobs_now, ctrls, idx, last)
         if ctrl is None:
             results.append({"i": idx, "ok": False, "note": "找不到对应卡片"})
@@ -730,10 +745,11 @@ def cmd_apply(args: argparse.Namespace) -> None:
     stale = 0
     scanned_max = 0
     while ok_n < count and stale < 5:
-        doc = find_document(win)
+        doc, ctrls, jobs = stable_snapshot(win)
         if not doc:
-            break
-        ctrls, jobs = snapshot_jobs(doc)
+            stale += 1
+            time.sleep(0.1)
+            continue
         if not jobs:
             stale += 1
             jitter_scroll_list_down(doc, ctrls)
